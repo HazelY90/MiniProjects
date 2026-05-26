@@ -1,6 +1,14 @@
 import tkinter as tk
+import sys
+from pathlib import Path
 from tkinter import messagebox
 from game import Game
+
+
+def resource_path(relative_path):
+    base_path = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
+    return str(Path(base_path) / relative_path)
+
 
 class Minesweeper:
 
@@ -64,7 +72,12 @@ class Minesweeper:
         self.topframe.pack(pady=10)
 
         #load pictures
-        self.mine_img=[tk.PhotoImage(file="mine0.png"),tk.PhotoImage(file="mine1.png")]
+        self.mine_img=[
+            tk.PhotoImage(file=resource_path("mine0.png")),
+            tk.PhotoImage(file=resource_path("mine1.png")),
+        ]
+        self.cell_width=max(image.width() for image in self.mine_img)
+        self.cell_height=max(image.height() for image in self.mine_img)
 
         # create easy-mode mine area
         self.mode="easy"
@@ -114,64 +127,132 @@ class Minesweeper:
         self.buttons=[[] for _ in range(m)]
         for i in range(m):
             for j in range(n):
-                self.button=tk.Button(self.minearea,width=3, height=1,font=("Arial",14))
+                self.button=tk.Canvas(
+                    self.minearea,
+                    width=self.cell_width,
+                    height=self.cell_height,
+                    bg="SystemButtonFace",
+                    highlightthickness=0,
+                )
                 self.button.grid(row=i,column=j)
-                self.button.bind("<Button-1>", lambda event, r=i, c=j: self.opencell(r, c))
+                self.button.bind("<Button-1>", lambda event, r=i, c=j: self.left_click(event, r, c))
                 self.button.bind("<Button-3>", lambda event, r=i, c=j: self.flagcell(r, c))
+                self.button.bind("<Button-2>", lambda event, r=i, c=j: self.flagcell(r, c))
+                self.button.bind("<Control-Button-1>", lambda event, r=i, c=j: self.flagcell(r, c))
+                self.draw_closed_cell(self.button)
                 self.buttons[i].append(self.button)
+        self.flags=[[False for _ in range(n)] for _ in range(m)]
         self.minearea.pack(padx=30,pady=20)
 
     def newgame(self):          
         self.game=Game(*self.MODES[self.mode])
+        self.flags=[[False for _ in range(self.game.cols)] for _ in range(self.game.rows)]
         self.lifelabel.config(text=f"Lives:{self.game.lives}")
         self.timelabel.config(text="Time: 00:00")
-                        
+
+    def left_click(self,event,i,j):
+        if event.state & 0x4:
+            return self.flagcell(i,j)
+        self.opencell(i,j)
+
     def opencell(self,i,j):
-        if self.buttons[i][j]["state"] == "disabled" or self.buttons[i][j]["text"]=="🚩":
+        if self.game.opened[i][j] or self.flags[i][j]:
             return
         status,cells=self.game.check_status(i,j)
         if status=="lost":
             self.show_mines("fail")
+            self.root.update()
             messagebox.showinfo("Failed!","Boom! Out of lives. Game Over.")
             return
         elif status=="revive":
-            self.buttons[i][j].config(image=self.mine_img[1], width=36,height=32, relief="sunken")
+            self.show_mine_image(i,j,0)
+            self.root.update()
             res=messagebox.askyesno("Hint!","Mine Hit! Spend a life to continue?")
             if res:
                 self.game.resume()
-                self.buttons[i][j].config(image="",text="",width=3,height=1,bg="SystemButtonFace",relief="raised",compound="none",state="normal")
+                self.reset_cell(i,j)
                 self.lifelabel.config(text=f"Lives:{self.game.lives}")
             else:
                 self.show_mines("fail")
+                self.root.update()
                 messagebox.showinfo("Failed!","Better luck next time!")
                 return
         else:
             for (r,c) in cells:   
                 if self.game.boards[r][c]==0:
-                    self.buttons[r][c].config(state="disabled",relief="sunken")
+                    self.draw_open_cell(r,c)
                 else:
-                    self.buttons[r][c].config(text=f"{self.game.boards[r][c]}",disabledforeground=self.COLORS[self.game.boards[r][c]],relief="sunken",state="disabled")
+                    self.draw_open_cell(r,c,self.game.boards[r][c])
                 
             if status=="win":
                 self.show_mines("win")
+                self.root.update()
                 messagebox.showinfo("Congratulations!","Congratulations! You have won the game!")
 
     def flagcell(self,i,j):
-        if self.buttons[i][j]["state"]=="disabled":
+        if self.game.opened[i][j]:
             return
-        current_text = self.buttons[i][j]["text"]
-        if current_text == "":
-            self.buttons[i][j].config(text="🚩", fg="red")
+        if not self.flags[i][j]:
+            self.flags[i][j]=True
+            self.draw_flag_cell(i,j)
         else:
-            self.buttons[i][j].config(text="",fg="black")
+            self.flags[i][j]=False
+            self.reset_cell(i,j)
+        return "break"
+
+    def reset_cell(self,i,j):
+        self.buttons[i][j].delete("all")
+        self.draw_closed_cell(self.buttons[i][j])
+        if hasattr(self,"flags"):
+            self.flags[i][j]=False
+
+    def draw_closed_cell(self,cell):
+        cell.create_rectangle(0,0,self.cell_width,self.cell_height,fill="SystemButtonFace",outline="gray60")
+        cell.create_line(0,0,self.cell_width,0,fill="white",width=2)
+        cell.create_line(0,0,0,self.cell_height,fill="white",width=2)
+        cell.create_line(0,self.cell_height-1,self.cell_width,self.cell_height-1,fill="gray45",width=2)
+        cell.create_line(self.cell_width-1,0,self.cell_width-1,self.cell_height,fill="gray45",width=2)
+
+    def draw_open_cell(self,i,j,number=None):
+        self.flags[i][j]=False
+        cell=self.buttons[i][j]
+        cell.delete("all")
+        cell.create_rectangle(0,0,self.cell_width,self.cell_height,fill="gray85",outline="gray60")
+        if number:
+            cell.create_text(
+                self.cell_width//2,
+                self.cell_height//2,
+                text=str(number),
+                fill=self.COLORS[number],
+                font=("Arial",14,"bold"),
+            )
+
+    def draw_flag_cell(self,i,j):
+        cell=self.buttons[i][j]
+        cell.delete("all")
+        self.draw_closed_cell(cell)
+        cell.create_text(
+            self.cell_width//2,
+            self.cell_height//2,
+            text="🚩",
+            fill="red",
+            font=("Arial",14),
+        )
+
+    def show_mine_image(self,i,j,image_index):
+        image=self.mine_img[image_index]
+        cell=self.buttons[i][j]
+        cell.delete("all")
+        cell.create_rectangle(0,0,self.cell_width,self.cell_height,fill="gray85",outline="gray60")
+        cell.create_image(self.cell_width//2,self.cell_height//2,image=image)
    
     def show_mines(self,result):
         if result=="fail":
             for r,c in self.game.mines:
-                self.buttons[r][c].config(image=self.mine_img[1], width=36,height=32, relief="sunken")
+                self.show_mine_image(r,c,1)
         else:
             for r,c in self.game.mines:
-                self.buttons[r][c].config(image=self.mine_img[0], width=36,height=32, relief="sunken") 
+                self.show_mine_image(r,c,0)
     
     def update_timer(self):
         time=self.game.update_time()
@@ -196,6 +277,6 @@ class Minesweeper:
         n=self.MODES[self.mode][1]
         for i in range(m):
             for j in range(n):
-                self.buttons[i][j].config(image="",text="",width=3,height=1,bg="SystemButtonFace",relief="raised",compound="none",state="normal")
+                self.reset_cell(i,j)
         self.newgame()
     
